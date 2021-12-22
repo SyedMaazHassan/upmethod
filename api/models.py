@@ -40,7 +40,7 @@ class Script(models.Model):
 
 class SystemUser(models.Model):
     id = models.AutoField(primary_key=True)
-    uid = models.UUIDField(unique = True)
+    uid = models.CharField(default = None, unique = True, max_length = 255)
     profile_picture = models.ImageField(upload_to = "profile-pictures", null = True, blank = True)
     first_name = models.CharField(max_length = 255)
     last_name = models.CharField(max_length = 255)
