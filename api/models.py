@@ -40,7 +40,7 @@ class Script(models.Model):
 
 class SystemUser(models.Model):
     uid = models.CharField(primary_key=True, max_length = 255)
-    avatar_url = models.URLField(null = True, blank = True)
+    avatar_url = models.TextField(null = True, blank = True)
     display_name = models.CharField(max_length = 255)
     first_name = models.CharField(max_length = 255)
     last_name = models.CharField(max_length = 255, null = True)
@@ -50,6 +50,10 @@ class SystemUser(models.Model):
 
     def __str__(self):
         return f"{self.first_name} - {self.uid}"
+
+    class Meta:
+        verbose_name = 'User'
+        verbose_name_plural = 'Users'
 
 class ApiToken(models.Model):
     key = models.UUIDField(unique = True, default=uuid.uuid4, editable = False)
