@@ -7,8 +7,12 @@ from django.utils import timezone
 from rest_framework.exceptions import AuthenticationFailed
 from django.shortcuts import get_object_or_404
 # Create your views here.
-from application.models import *
 from api.models import *
+from django.conf import settings
+from api.authentication import RequestAuthentication, ApiResponse
+from api.support import beautify_errors
+import json
+import requests
 # from rest_framework.permissions import IsAuthenticated
 # from rest_framework_simplejwt.authentication import JWTAuthentication
 
@@ -17,353 +21,114 @@ from api.models import *
 
 
 def index(request):
-
-    return render(request, "test.html")
-
-
-def check_api_key(request):
-    output = {
-        'status': False,
-        'data': None,
-        'message': None,
-        'errors': None
-    }
-
-    func_output = {
-        'status': False,
-        'response': None
-    }
-
-    errors = {}
-    if 'api_key' in request.data:
-        try:
-            query = ApiToken.objects.filter(key = request.data['api_key'])
-            if query.exists():
-                output['status'] = True
-            else:
-                errors['api_key'] = ["API key is wrong."]
-        except Exception as e:
-            errors['api_key'] = [str(e)]
-    else:
-        errors['api_key'] = ["API key is missing."]
+    return render(request, "abcc.html")
 
 
-    if 'api_key' in errors:
-        output['errors'] = errors
-        func_output['status'] = True
-    else:
-        func_output['status'] = False
+class UserApi(APIView, ApiResponse):
+    authentication_classes = [RequestAuthentication]
+    def __init__(self):
+        self.platforms = ['google', 'fb']
+        ApiResponse.__init__(self)
 
-    func_output['response'] = Response(output)
-    func_output['output'] = output
-
-    return func_output
-
-
-class AuthenticationApi(APIView):
-    def get(self, request):
-        print("xxxxxxxxxxxxxxxxxxxxxxxxx")
-        print(request.data)
-        print("xxxxxxxxxxxxxxxxxxxxxxxxx")
-
-        JWT_authenticator = JWTAuthentication()
-        response = JWT_authenticator.authenticate(request)
-        if response is not None:
-            # unpacking
-            user , token = response
-            print("this is decoded token claims", token.payload)
-        else:
-            print("no token is provided in the header or the header is missing")
-
-        return Response(response)
-
-    def post(self, request, action):
-        output = {}
-        if action == "login":
-            print(request.data)
-            username = request.data["username"]
-            password = request.data["password"]
-
-            user = auth.authenticate(username=username, password=password)
-
-            if user is not None:
-                # Log the user in, if credentials are correct
-                refresh = RefreshToken.for_user(user)
-                output["payload"] = {
-                    "refresh": str(refresh),
-                    "access": str(refresh.access_token)
-                }
-                output["status"] = True
-                output["message"] = "Login has been authenticated!" 
-            else:
-                output["status"] = False
-                output["message"] = "Credentials are incorrect!"  
-
-        return Response(output)
-
-
-
-class GetUsersApi(APIView):
-
-    def get(self, request, id = None):
-        api_key_check = check_api_key(request)
-        if api_key_check['status']:
-            return api_key_check['response']
-        else:
-            output = api_key_check['output']
-
-
-        if id:
-            try:
-                user = get_object_or_404(SystemUser, uid=id)
-                serializer = UserSerializer(user, many = False)
-                output["data"] = serializer.data
-                output["status"] = True
-                    
-            except Exception as e:
-                output["status"] = False
-                output["errors"] = [str(e)]
-
-        else:
-
-            all_users = SystemUser.objects.all()
-            serializer = UserSerializer(all_users, many = True)
-            output["data"] = serializer.data
-            output["status"] = True
-
-        return Response(output)
-
-
-
-
-class AddUserApi(APIView):
-    def post(self, request):
-        api_key_check = check_api_key(request)
-        if api_key_check['status']:
-            return api_key_check['response']
-        else:
-            output = api_key_check['output']
-
-        serializer = UserSerializer(data=request.data)
+    def create_google_user(self, response_object):
+        google_user = response_object['user']
+        user = {
+            'avatar_url': google_user['photo'],
+            'display_name': google_user['givenName'],
+            'first_name': google_user['givenName'],
+            'last_name': google_user['familyName'],
+            'email': google_user['email']
+        }
+        return user
+    
+    def get_fb_user(self, user_id, access_token):
+        api_url = f'https://graph.facebook.com/{user_id}?fields=id,name,email,picture.type(large)&access_token={access_token}'
+        response = requests.get(
+            api_url,
+            timeout = 6
+        )
+        output = response.json()
+        return output
         
-        if serializer.is_valid():
-            serializer.save()
-            output['message'] = "User is saved successfully!"
-            output['data'] = serializer.data
-        else:
-            output['status'] = False
-            output['message'] = "Something went wrong!"
-            output['errors'] = serializer.errors
+    def create_facebook_user(self, response_object):
+        user_id = response_object['userID']
+        access_token = response_object['accessToken']
+        fb_user = self.get_fb_user(user_id, access_token)
+        profile_pic = fb_user['picture']['data']['url']
+        name_collection = fb_user['name'].split(' ')
+        first_name = name_collection[0]
+        last_name = name_collection[1]
+        email = fb_user['email'] if 'email' in fb_user else None
+        if len(first_name) > 1:
+            last_name = ' '.join(name_collection[1:])
+        user = {
+            'avatar_url': profile_pic,
+            'display_name': first_name,
+            'first_name': first_name,
+            'last_name': last_name,
+            'email': email
+        }
+        return user
 
-        return Response(output)
-
-
-
-class GetScriptApi(APIView):
-    # authentication_process = [JWTAuthentication]
-    # permission_classes = [IsAuthenticated]
-
-    def get(self, request, id=None):
-        api_key_check = check_api_key(request)
-        if api_key_check['status']:
-            return api_key_check['response']
-        else:
-            output = api_key_check['output']
-
-        if id:
+    def generate_user_object(self, platform, response_object):
+        if platform in self.platforms:
             try:
-                script = get_object_or_404(Script, id=id)
-                serializer = ScriptSerializer(script, many = False)
-                output["data"] = serializer.data
-                output["status"] = True
-                    
+                user = None
+                if platform == 'google':
+                    user = self.create_google_user(response_object)
+                if platform == 'fb':
+                    user = self.create_facebook_user(response_object)
+                return (True, user)
             except Exception as e:
-                output["status"] = False
-                output["errors"] = [str(e)]            
+                return (False, str(e))
         else:
-
-            script = Script.objects.all()
-            serializer = AllScriptSerializer(script, many=True)
-
-            output["data"] = serializer.data
-            if script.count() == 0:
-                output["message"] = "No script exists"
+            return (False, "Invalid third party platform")
+ 
+    def post(self, request, uid=None, platform=None):
+        try:
+            data = request.data
+            user = self.generate_user_object(platform, data)
+            if user[0]:
+                user = user[1]
+                user['auth_type'] = platform
+                user['uid'] = uid
+                serializer = UserSerializer(data = user)
+                if serializer.is_valid():
+                    serializer.save()
+                    self.postSuccess({'user': serializer.data}, "User added successfully")
+                self.postError(beautify_errors(serializer.errors))
             else:
-                output["message"] = ""
+                self.postError({'user': user[1]})
+        except Exception as e:
+            self.postError({ 'uid': str(e) })
+        return Response(self.output_object)
 
-        return Response(output)
+    def get(self, request, uid=None):
+        try:
+            if not uid:
+                raise Exception("UID is missing")
+            user = get_object_or_404(SystemUser, uid=uid)
+            serializer = UserSerializer(user, many = False)
+            self.postSuccess({'user': serializer.data}, "User fetched successfully")
+        except Exception as e:
+            self.postError({ 'uid': str(e) })
+        return Response(self.output_object)
 
+    def patch(self, request, uid=None):
+        try:
+            user_obj = get_object_or_404(SystemUser, uid=uid)
 
-# class GetEmployeeApi(APIView):
-#     def get(self, request):
-#         output = {}
-#         is_deleted = request.data['is_deleted']
-#         if is_deleted and is_deleted == "true":
-#             all_employees = Employee.objects.filter(
-#                 is_deleted=True, is_active=False)
-#         else:
-#             all_employees = Employee.objects.filter(
-#                 is_deleted=False, is_active=True)
+            if user_obj.email != request.data['email']:
+                self.postError({'email': 'To avoid problems with future signin, Email cannot be updated'})
+                return Response(self.output_object)
 
-#         # Getting students
-#         # Serializing -> converting to JSON
-#         serializer = EmployeeSerializer(all_employees, many=True)
-#         output['status'] = 200
-#         output['payload'] = serializer.data
-#         return Response(output)
-
-
-# class SaveEmployeeApi(APIView):
-#     def post(self, request):
-#         output = {}
-#         data = request.data
-
-#         # Creating record
-        # serializer = EmployeeSerializer(data=data)
-
-        # if serializer.is_valid():
-        #     serializer.save()
-        #     output['status'] = 200
-        #     output['message'] = "Employee is saved successfully!"
-        #     output['details'] = serializer.data
-        # else:
-        #     output['status'] = 403
-        #     output['message'] = "Something went wrong!"
-        #     output['errors'] = serializer.errors
-
-        # return Response(output)
-
-
-# class UpdateEmployeeApi(APIView):
-#     def update_details(self, request, partial=False):
-#         output = {
-#             'status': 403,
-#             'message': "Request failed"
-#         }
-#         try:
-#             id = request.data['id']
-#             print(id)
-#             student = Employee.objects.get(id=id)
-#             if partial:
-#                 serializer = EmployeeSerializer(
-#                     instance=student, data=request.data, partial=True)
-#             else:
-#                 serializer = EmployeeSerializer(
-#                     instance=student, data=request.data)
-#             if serializer.is_valid():
-#                 serializer.save()
-#                 output['status'] = 200
-#                 output['message'] = "Employee record updated successfully!"
-#                 output['details'] = serializer.data
-#             else:
-#                 output['errors'] = serializer.errors
-#         except Exception as e:
-#             output['errors'] = str(e)
-
-#         return output
-
-#     def patch(self, request):
-#         output = self.update_details(request, True)
-#         return Response(output)
-
-#     def put(self, request):
-#         output = self.update_details(request, False)
-#         return Response(output)
-
-
-# class DeleteEmployeeApi(APIView):
-#     def delete(self, request):
-#         output = {}
-#         print(request.data['id'])
-#         try:
-#             id = request.data['id']
-#             employee = Employee.objects.get(id=id)
-#             serializer = EmployeeSerializer(instance=employee, many=False)
-#             employee.is_active = False
-#             employee.is_deleted = True
-#             employee.save()
-#             output['status'] = 200
-#             output['message'] = "Employee has been deleted!"
-#             output['details'] = serializer.data
-#         except Exception as e:
-#             output['status'] = 200
-#             output['message'] = "Request failed!"
-#             output['details'] = str(e)
-
-#         return Response(output)
-
-
-# class UndeleteEmployeeApi(APIView):
-#     def post(self, request):
-#         output = {}
-#         id = request.data['id']
-#         try:
-#             id = request.data['id']
-#             employee = Employee.objects.get(id=id)
-#             serializer = EmployeeSerializer(instance=employee, many=False)
-#             employee.is_active = True
-#             employee.is_deleted = False
-#             employee.save()
-#             output['status'] = 200
-#             output['message'] = "Employee has been undeleted and active now!"
-#             output['details'] = serializer.data
-#         except Exception as e:
-#             output['status'] = 200
-#             output['message'] = "Request failed!"
-#             output['details'] = str(e)
-
-#         return Response(output)
-
-
-# class GetCompanyApi(APIView):
-#     def get(self, request):
-#         output = {}
-#         if 'id' in request.data:
-#             id = request.data['id']
-#             company = get_object_or_404(Company, id=id)
-#             print(company)
-#             # Serializing -> converting to JSON
-#             serializer = CompanySerializer(company, many=False)
-#             output['status'] = 200
-#             output['payload'] = serializer.data
-#         else:
-#             output['status'] = 403
-#             output['message'] = "Company ID is required!"
-
-#         return Response(output)
-
-
-# class UpdateCompanyApi(APIView):
-#     def update_details(self, request, partial=False):
-#         output = {
-#             'status': 403,
-#             'message': "Request failed"
-#         }
-#         try:
-#             id = request.data['id']
-#             student = Company.objects.get(id=id)
-#             if partial:
-#                 serializer = CompanySerializer(
-#                     instance=student, data=request.data, partial=True)
-#             else:
-#                 serializer = CompanySerializer(
-#                     instance=student, data=request.data)
-#             if serializer.is_valid():
-#                 serializer.save()
-#                 output['status'] = 200
-#                 output['message'] = "Company record updated successfully!"
-#                 output['details'] = serializer.data
-#             else:
-#                 output['errors'] = serializer.errors
-#         except Exception as e:
-#             output['errors'] = str(e)
-
-#         return output
-
-#     def patch(self, request):
-#         output = self.update_details(request, True)
-#         return Response(output)
-
-#     def put(self, request):
-#         output = self.update_details(request, False)
-#         return Response(output)
+            serializer = UserSerializer(user_obj, data=request.data, partial = True)
+            
+            if serializer.is_valid():
+                serializer.save()
+                self.postSuccess({'user': serializer.data}, "User updated successfully")
+            else:
+                self.postError(beautify_errors(serializer.errors))                 
+        except Exception as e:
+            self.postError({ 'uid': str(e) })
+        return Response(self.output_object)

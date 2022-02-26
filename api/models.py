@@ -39,15 +39,17 @@ class Script(models.Model):
 
 
 class SystemUser(models.Model):
-    id = models.AutoField(primary_key=True)
-    uid = models.CharField(default = None, unique = True, max_length = 255)
-    profile_picture = models.ImageField(upload_to = "profile-pictures", null = True, blank = True)
+    uid = models.CharField(primary_key=True, max_length = 255)
+    avatar_url = models.URLField(null = True, blank = True)
+    display_name = models.CharField(max_length = 255)
     first_name = models.CharField(max_length = 255)
-    last_name = models.CharField(max_length = 255)
+    last_name = models.CharField(max_length = 255, null = True)
+    email = models.EmailField(unique = True, null = True)
+    auth_type = models.CharField(max_length = 255, choices = [('google', 'google'), ('fb', 'facebook')])
+    created_at = models.DateTimeField(default = timezone.now)
 
     def __str__(self):
         return f"{self.first_name} - {self.uid}"
-
 
 class ApiToken(models.Model):
     key = models.UUIDField(unique = True, default=uuid.uuid4, editable = False)

@@ -10,12 +10,14 @@ from django.conf.urls.static import static
 
 urlpatterns = [
     # path('', views.index, name="index"),
-    path('scripts', GetScriptApi.as_view()),
-    path('scripts/<id>', GetScriptApi.as_view()),
-    path('add-user', AddUserApi.as_view()), 
-    path('users', GetUsersApi.as_view()),
-    path('users/<id>', GetUsersApi.as_view())   
-    
+    # path('scripts', GetScriptApi.as_view()),
+    # path('scripts/<id>', GetScriptApi.as_view()),
+    path('user/<uid>', UserApi.as_view()),
+    path('user/<uid>/<platform>/add', UserApi.as_view()),
+
+    # path('user/<uid>/add', UserApi.as_view()),
+    # path('user/<uid>/update', UserApi.as_view())
+
     # path('auth/checktoken', AuthenticationApi.as_view()),
     # path('auth/<action>', AuthenticationApi.as_view()),
 
